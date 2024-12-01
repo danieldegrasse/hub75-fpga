@@ -2,7 +2,7 @@
 
 # Hardware definitions. All synthesizable modules should
 # be declared here, as some testbenches may use multiple modules.
-HDL=block_ram.v
+HDL=block_ram.v led_output.v
 
 # Testbenches should be named with the pattern <module_name>_tb.v,
 # where <module_name> is the module to be tested. VCD dump files
