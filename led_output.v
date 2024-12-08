@@ -40,7 +40,7 @@ module led_output #(
 	output reg [4:0] addr,
 	output reg latch,
 	output reg blank,
-	output reg led_clk
+	output wire led_clk
 );
 	localparam LED_COUNT_WIDTH = $clog2(MATRIX_WIDTH) - 1;
 	// FSM state definitions
@@ -91,24 +91,6 @@ module led_output #(
 	assign b_norm [0] = b_raw[0] / 31;
 	assign b_norm [1] = b_raw[1] / 31;
 
-	always @(posedge clk or posedge rst) begin
-		if (rst == 1'b1) begin
-			state <= IDLE_STATE;
-			// Reset module outputs
-			r <= 2'b0;
-			g <= 2'b0;
-			b <= 2'b0;
-			r_addr <= 'b0;
-			addr <= 2'b0;
-			latch <= 1'b0;
-			blank <= 1'b0;
-			led_clk <= 1'b0;
-			led_clk_count <= 'b0;
-			bit_idx <= 3'b0;
-			bit_delay <= 5'b0;
-		end
-	end
-
 	//
 	// We implement the core logic of this module as an FSM, with the
 	// following states:
@@ -119,112 +101,120 @@ module led_output #(
 	// Note that we pipeline reads from the ram bank, so that we don't
 	// have to wait an additional clock cycle for RGB data
 
-	always @(negedge clk) begin
-		if (state == CLOCKING_STATE) begin
-			// Toggle the LED clock in sync with the clk signal
-			led_clk <= 1'b0;
-		end
-	end
+	// LED clock should follow the input clock when state is clocking
+	assign led_clk = (clk & (state == CLOCKING_STATE));
 
 	always @(posedge clk) begin
-		case (state)
-			// Wait for the go signal
-			IDLE_STATE: begin
-				if (go == 1'b1) begin
-					// Move to the QUEUE state
-					state <= QUEUE_STATE;
-					// Move address so we can start
-					// filling pipeline
-					r_addr <= r_addr + 1;
+		if (rst == 1'b1) begin
+			state <= IDLE_STATE;
+			// Reset module outputs
+			r <= 2'b0;
+			g <= 2'b0;
+			b <= 2'b0;
+			r_addr <= 'b0;
+			addr <= 2'b0;
+			latch <= 1'b0;
+			blank <= 1'b0;
+			led_clk_count <= 'b0;
+			bit_idx <= 3'b0;
+			bit_delay <= 5'b0;
+		end else begin
+			case (state)
+				// Wait for the go signal
+				IDLE_STATE: begin
+					if (go == 1'b1) begin
+						// Move to the QUEUE state
+						state <= QUEUE_STATE;
+						// Move address so we can start
+						// filling pipeline
+						r_addr <= r_addr + 1;
+					end
 				end
-			end
 
-			QUEUE_STATE: begin
-				// Continue filling pipeline of RGB data
-				r_stage1[0] <= r_norm[0][bit_idx];
-				r_stage1[1] <= r_norm[1][bit_idx];
-				g_stage1[0] <= g_norm[0][bit_idx];
-				g_stage1[1] <= g_norm[1][bit_idx];
-				b_stage1[0] <= b_norm[0][bit_idx];
-				b_stage1[1] <= b_norm[1][bit_idx];
-				// Shift stage1 of pipeline to stage2
-				r_stage2[0] <= r_stage1[0];
-				r_stage2[1] <= r_stage1[1];
-				g_stage2[0] <= g_stage1[0];
-				g_stage2[1] <= g_stage1[1];
-				b_stage2[0] <= b_stage1[0];
-				b_stage2[1] <= b_stage1[1];
-				r_addr <= r_addr + 1;
-				if (r_addr == 'd2) begin
-					// Pipeline is full
+				QUEUE_STATE: begin
+					// Continue filling pipeline of RGB data
+					r_stage1[0] <= r_norm[0][bit_idx];
+					r_stage1[1] <= r_norm[1][bit_idx];
+					g_stage1[0] <= g_norm[0][bit_idx];
+					g_stage1[1] <= g_norm[1][bit_idx];
+					b_stage1[0] <= b_norm[0][bit_idx];
+					b_stage1[1] <= b_norm[1][bit_idx];
+					// Shift stage1 of pipeline to stage2
+					r_stage2[0] <= r_stage1[0];
+					r_stage2[1] <= r_stage1[1];
+					g_stage2[0] <= g_stage1[0];
+					g_stage2[1] <= g_stage1[1];
+					b_stage2[0] <= b_stage1[0];
+					b_stage2[1] <= b_stage1[1];
+					r_addr <= r_addr + 1;
+					if (r_addr == 'd2) begin
+						// Pipeline is full
+						state <= CLOCKING_STATE;
+					end
+				end
+
+				// Clock LEDs
+				CLOCKING_STATE: begin
+					if (latch == 1'b1) begin
+						// End of row scan. Move address.
+						addr <= addr + 1;
+						latch <= 1'b0;
+						if (addr == ((MATRIX_HEIGHT / 2) - 1)) begin
+							// End of line scan, reset
+							// address
+							addr <= 'b0;
+						end
+					end
+					blank <= 1'b1;
+					// Continue filling pipeline of RGB data
+					r_stage1[0] <= r_norm[0][bit_idx];
+					r_stage1[1] <= r_norm[1][bit_idx];
+					g_stage1[0] <= g_norm[0][bit_idx];
+					g_stage1[1] <= g_norm[1][bit_idx];
+					b_stage1[0] <= b_norm[0][bit_idx];
+					b_stage1[1] <= b_norm[1][bit_idx];
+					// Shift stage1 of pipeline to stage2
+					r_stage2[0] <= r_stage1[0];
+					r_stage2[1] <= r_stage1[1];
+					g_stage2[0] <= g_stage1[0];
+					g_stage2[1] <= g_stage1[1];
+					b_stage2[0] <= b_stage1[0];
+					b_stage2[1] <= b_stage1[1];
+					r_addr <= r_addr + 1;
+					// Move data from pipeline
+					r <= r_stage2;
+					g <= g_stage2;
+					b <= b_stage2;
+					led_clk_count <= led_clk_count + 1;
+					r_addr <= r_addr + 1;
+					if (led_clk_count == MATRIX_WIDTH - 1) begin
+						// Move to latching state
+						state <= LATCHING_STATE;
+					end
+					if (r_addr == ((MATRIX_HEIGHT * MATRIX_WIDTH) / 2 - 1)) begin
+						// End of line scan. Move bit index.
+						bit_delay <= bit_delay - 1;
+						if (bit_delay == 0) begin
+							bit_idx <= bit_idx + 1;
+							bit_delay <= (2 ** (bit_idx + 1)) - 1;
+						end
+					end
+				end
+
+				LATCHING_STATE: begin
+					// Reset clock count
+					led_clk_count <= 'b0;
+					latch <= 1'b1;
+					blank <= 1'b0;
+					// Move to clocking state
 					state <= CLOCKING_STATE;
 				end
-			end
 
-			// Clock LEDs
-			CLOCKING_STATE: begin
-				if (latch == 1'b1) begin
-					// End of row scan. Move address.
-					addr <= addr + 1;
-					latch <= 1'b0;
-					if (addr == ((MATRIX_HEIGHT / 2) - 1)) begin
-						// End of line scan, reset
-						// address
-						addr <= 'b0;
-					end
+				default: begin
+					// Move to idle state
+					state <= IDLE_STATE;
 				end
-				blank <= 1'b1;
-				// LED clock is in sync with clk signal
-				led_clk <= 1'b1;
-				// Continue filling pipeline of RGB data
-				r_stage1[0] <= r_norm[0][bit_idx];
-				r_stage1[1] <= r_norm[1][bit_idx];
-				g_stage1[0] <= g_norm[0][bit_idx];
-				g_stage1[1] <= g_norm[1][bit_idx];
-				b_stage1[0] <= b_norm[0][bit_idx];
-				b_stage1[1] <= b_norm[1][bit_idx];
-				// Shift stage1 of pipeline to stage2
-				r_stage2[0] <= r_stage1[0];
-				r_stage2[1] <= r_stage1[1];
-				g_stage2[0] <= g_stage1[0];
-				g_stage2[1] <= g_stage1[1];
-				b_stage2[0] <= b_stage1[0];
-				b_stage2[1] <= b_stage1[1];
-				r_addr <= r_addr + 1;
-				// Move data from pipeline
-				r <= r_stage2;
-				g <= g_stage2;
-				b <= b_stage2;
-				led_clk_count <= led_clk_count + 1;
-				r_addr <= r_addr + 1;
-				if (led_clk_count == MATRIX_WIDTH - 1) begin
-					// Move to latching state
-					state <= LATCHING_STATE;
-				end
-				if (r_addr == ((MATRIX_HEIGHT * MATRIX_WIDTH) / 2 - 1)) begin
-					// End of line scan. Move bit index.
-					bit_delay <= bit_delay - 1;
-					if (bit_delay == 0) begin
-						bit_idx <= bit_idx + 1;
-						bit_delay <= (2 ** (bit_idx + 1)) - 1;
-					end
-				end
-			end
-
-			LATCHING_STATE: begin
-				// Reset clock count
-				led_clk_count <= 'b0;
-				led_clk <= 1'b0;
-				latch <= 1'b1;
-				blank <= 1'b0;
-				// Move to clocking state
-				state <= CLOCKING_STATE;
-			end
-
-			default: begin
-				// Move to idle state
-				state <= IDLE_STATE;
-			end
-		endcase
+			endcase
+		end
 	end
 endmodule

@@ -1,0 +1,31 @@
+# LED driver constraint file for the pico-ice board
+
+## Inputs
+# Button
+set_io -pullup yes start 10
+# Clock
+set_io clk 35
+
+## Outputs
+# LED r,g,b
+set_io r[0] 28
+set_io g[0] 31
+set_io b[0] 32
+set_io r[1] 34
+set_io g[1] 36
+set_io b[1] 38
+
+# Address lines
+set_io addr[0] 44
+set_io addr[1] 45
+set_io addr[2] 46
+set_io addr[3] 47
+# Unused on 32 row panel
+set_io addr[4] 25
+
+# LAT, CLK, OE
+set_io led_clk 42
+set_io blank 48
+set_io latch 2
+
+
