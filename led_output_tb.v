@@ -128,30 +128,35 @@ module led_output_tb();
 
 		// Now, validate that the LED module has not started
 		// clocking data
-		if ((latch != 1'b0) || (led_clk != 1'b0) || (blank != 1'b0)) begin
+		if ((latch != 1'b0) || (led_clk != 1'b0) || (blank != 1'b1)) begin
 			$error("LED module has clocked data before GO signal");
 			$finish();
 		end
 
 		// Send go signal, and validate that LED clock goes high
-		// One period to latch GO signal, 2 periods to fill pipeline,
-		// one period to start clock
+		// One period to latch GO signal and 2 periods to fill pipeline
 		go = 1'b1;
 		#CLOCK_PERIOD
 		go = 1'b0;
-		#(3 * CLOCK_PERIOD);
+		#(2 * CLOCK_PERIOD);
+		if (led_clk != 1'b0) begin
+			$error("LED clock started too early");
+			$finish();
+		end
+		// Delay one half period, make sure LED clock starts.
+		// We will sample bits on this offset, since that is when
+		// the LED driver would
+		#(CLOCK_PERIOD/2);
 		if (led_clk != 1'b1) begin
 			$error("LED clock did not start");
 			$finish();
 		end
-
-		// With the clock running, verify the R, G and B outputs.
-		// all should be clear, as address 0 has 0x0000
+		// Check that R,G, and B outputs are present.
+		// All should be clear, as address 0 has 0x0000
 		if ((r_out != 2'b0) || (b_out != 2'b0) || (g_out != 2'b0)) begin
 			$error("LED module clocked incorrect data");
 			$finish();
 		end
-
 		// Clock the next set of bits out
 		#CLOCK_PERIOD;
 		// R/B should be clear, G should be 1, as address 1 has 0x821
@@ -175,14 +180,14 @@ module led_output_tb();
 		// Send 5 additional clocks so we get to the end of the row
 		// scan. Verify that we see latch high.
 		#(5 * CLOCK_PERIOD);
-		if ((latch != 1'b1) || (blank != 1'b0)) begin
+		if ((latch != 1'b1) || (blank != 1'b1)) begin
 			$error("LED module did not latch on row scan");
 			$finish();
 		end
 		// Scan the remaining row (9 clocks total)
 		// Verify that we see latch high, and that address is 1
 		#(9 * CLOCK_PERIOD);
-		if ((latch != 1'b1) || (blank != 1'b0) || (led_addr != 5'b1)) begin
+		if ((latch != 1'b1) || (blank != 1'b1) || (led_addr != 5'b1)) begin
 			$error("LED module did not latch on row scan");
 			$finish();
 		end
@@ -203,7 +208,7 @@ module led_output_tb();
 		// Scan the whole display, and return to address 0. We should
 		// still see the same data being scanned.
 		#(CLOCK_PERIOD * 16)
-		if ((latch != 1'b1) || (blank != 1'b0) || (led_addr != 5'b1)) begin
+		if ((latch != 1'b1) || (blank != 1'b1) || (led_addr != 5'b1)) begin
 			$error("LED module did not latch on row scan");
 			$finish();
 		end

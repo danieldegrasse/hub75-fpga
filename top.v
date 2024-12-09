@@ -1,6 +1,8 @@
 // This module implements the top glue logic for driving the matrix.
 
-module top(
+module top #(
+	parameter CLOCK_DIV_FACTOR = 1
+)(
 	// Inputs
 	input clk,
 	input start,
@@ -13,65 +15,103 @@ module top(
 	output wire blank,
 	output wire led_clk
 );
-
-	// For now, we will simply drive the matrix using some hardcoded
-	// values. This way, we can be sure the design actually works on
-	// hardware.
-
-	assign r[0] = 1'b1;
-	assign r[1] = 1'b0;
-
-	assign g[0] = 1'b0;
-	assign g[1] = 1'b0;
-
-	assign b[0] = 1'b0;
-	assign b[1] = 1'b1;
-
-	localparam STATE_CLOCKING = 0;
-	localparam STATE_LATCHING = 1;
-	localparam MATRIX_WIDTH = 64;
 	localparam MATRIX_HEIGHT = 32;
+	localparam MATRIX_WIDTH = 64;
+	localparam BANK_SIZE = (MATRIX_HEIGHT * MATRIX_WIDTH) / 2;
 
-	reg state;
-	reg [$clog2(MATRIX_WIDTH) - 1: 0] led_clk_count;
-	reg [4:0] led_addr;
+	// Glue logic from memory to LED output
+	wire [$clog2(BANK_SIZE) - 1:0] bank_raddr;
+	wire [15:0] bank_data[0:1];
+	wire module_rst;
+	reg rst;
+	reg go;
 
-	assign addr = led_addr;
+	reg [$clog2(CLOCK_DIV_FACTOR):0] clk_count;
+	reg div_clk;
 
-	assign led_clk = (clk & (state == STATE_CLOCKING));
-	assign latch = (state == STATE_LATCHING);
-	// Blank is active low signal
-	assign blank = ~(state == STATE_CLOCKING);
+	assign module_rst = ~start; // Active low signal
 
-	always @(posedge clk) begin
-		if (start == 1'b0) begin
-			// Start signal is active low. Move into clocking state.
-			state <= STATE_CLOCKING;
-			led_clk_count <= 'b0;
-			led_addr <= 5'b0;
+	always @(posedge clk or posedge module_rst) begin
+		if (module_rst == 1'b1) begin
+			// Reset clock div
+			clk_count <= 'b0;
+			div_clk <= 1'b0;
+		end else if (clk_count == CLOCK_DIV_FACTOR) begin
+			// Divider should yield 6 Hz clock
+			clk_count <= 'b0;
+			div_clk <= ~div_clk;
 		end else begin
-			case (state)
-				STATE_CLOCKING: begin
-					if (led_clk_count == (MATRIX_WIDTH - 1)) begin
-						// Move to latching state
-						state <= STATE_LATCHING;
-						led_clk_count <= 'b0;
-					end else begin
-						led_clk_count <= led_clk_count + 1;
-					end
-				end
-				STATE_LATCHING: begin
-					if (led_addr == ((MATRIX_HEIGHT / 2) - 1)) begin
-						// Move back to address 0
-						led_addr <= 5'b0;
-					end else begin
-						// Move address forwards
-						led_addr <= led_addr + 1;
-					end
-					state <= STATE_CLOCKING;
-				end
-			endcase
+			clk_count <= clk_count + 1;
 		end
 	end
+
+	// Glue logic to start LED module
+	always @(posedge div_clk or posedge module_rst) begin
+		if (module_rst == 1'b1) begin
+			// Reset module.
+			rst <= 1'b1;
+			go <= 1'b0;
+		end else if (rst == 1'b1) begin
+			// Clear module reset
+			rst <= 1'b0;
+		end else if (go == 1'b0) begin
+			// Set GO signal
+			go <= 1'b1;
+		end else begin
+			// Clear GO signal
+			go <= 1'b0;
+		end
+	end
+
+	// Dual memory banks for input to LED module, since scanlines
+	// are interleaved
+	memory#(.RAM_SIZE(BANK_SIZE),
+		.INIT_FILE("bank0_mem.txt"))
+	bank0(
+		// Inputs
+		.clk(div_clk),
+		.r_en(1'b1),
+		.w_en(1'b0),
+		.w_data(16'b0),
+		.w_addr(10'b0),
+		// Outputs
+		.r_addr(bank_raddr),
+		.r_data(bank_data[0])
+	);
+
+	memory#(.RAM_SIZE(BANK_SIZE),
+		.INIT_FILE("bank1_mem.txt"))
+	bank1(
+		// Inputs
+		.clk(div_clk),
+		.r_en(1'b1),
+		.w_en(1'b0),
+		.w_data(16'b0),
+		.w_addr(10'b0),
+		// Outputs
+		.r_addr(bank_raddr),
+		.r_data(bank_data[1])
+	);
+
+	// LED module under test
+	led_output#(.MATRIX_HEIGHT(MATRIX_HEIGHT),
+		    .MATRIX_WIDTH(MATRIX_WIDTH))
+	led_driver(
+		// Inputs
+		.clk(div_clk),
+		.rst(rst),
+		.go(go),
+		.rgb_0(bank_data[0]),
+		.rgb_1(bank_data[1]),
+		// Outputs
+		.r_addr(bank_raddr),
+		.r(r),
+		.g(g),
+		.b(b),
+		.latch(latch),
+		.blank(blank),
+		.led_clk(led_clk),
+		.addr(addr)
+	);
 endmodule
 

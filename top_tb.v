@@ -20,7 +20,8 @@ module top_tb();
 	wire [4:0] led_addr;
 
 	// module under test
-	top uut(
+	top#(.CLOCK_DIV_FACTOR(1))
+	uut(
 		// Inputs
 		.clk(clk),
 		.start(start),
@@ -53,9 +54,8 @@ module top_tb();
 		start = 1'b1;
 		#CLOCK_PERIOD;
 
-		// Clock the LED module until a full display frame can
-		// scan
-		#(CLOCK_PERIOD * 65 * 32)
+		// Clock the LED module
+		#(CLOCK_PERIOD * 65 * 10000)
 
 		$finish();
 	end
